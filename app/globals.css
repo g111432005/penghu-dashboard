@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy:  #0b3d59;
+  --teal:  #0e7490;
+  --amber: #d97706;
+  --coral: #ef4444;
+  --mint:  #10b981;
+}
+
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+body {
+  font-family: 'Noto Sans TC', system-ui, sans-serif;
+  background:
+    radial-gradient(1100px 500px at 8% -10%, rgba(8, 145, 178, 0.09), transparent 60%),
+    radial-gradient(900px 480px at 95% 0%, rgba(11, 61, 89, 0.07), transparent 55%),
+    #f0f6f8;
+  background-attachment: fixed;
+}
+
+.card {
+  @apply bg-white rounded-2xl shadow-sm border border-slate-100 p-6 transition-all duration-200;
+}
+.card:hover {
+  @apply shadow-md border-slate-200;
+}
+.stat-label {
+  @apply text-xs font-medium text-slate-500 uppercase tracking-wider;
+}
+.stat-value {
+  @apply text-3xl font-bold text-ph-navy tabular-nums;
+}
+.tab-btn {
+  @apply px-3.5 py-2 text-sm font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5 whitespace-nowrap;
+}
+.tab-btn.active {
+  @apply bg-ph-navy text-white shadow-sm;
+}
+.tab-btn:not(.active) {
+  @apply text-slate-500 hover:bg-slate-100 hover:text-ph-navy;
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.35s ease-out; }
