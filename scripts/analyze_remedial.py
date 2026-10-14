@@ -488,6 +488,140 @@ def persistent_underperformers(risk):
     return out
 
 
+# ───────────────── 10. 學校脈絡變數（公開資料） ─────────────────
+def pearson(xs, ys):
+    n = len(xs)
+    if n < 10:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    sy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if not sx or not sy:
+        return None
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy)
+
+
+def partial_corr(xs, ys, zs):
+    """控制 z 之後 x 與 y 的偏相關。
+
+    師生比與學校規模高度共線（澎湖師生比最低者即為極小型離島校），
+    不控制規模就把「規模效應」誤讀成「師資投入效應」。
+    """
+    rxy, rxz, ryz = pearson(xs, ys), pearson(xs, zs), pearson(ys, zs)
+    if None in (rxy, rxz, ryz):
+        return None
+    den = math.sqrt((1 - rxz ** 2) * (1 - ryz ** 2))
+    return rxy if den == 0 else (rxy - rxz * ryz) / den
+
+
+def context_analysis(rows, ctx):
+    """結合教育部公開資料的學校脈絡變數：偏遠分級、原住民比率、師生比。"""
+    if not ctx:
+        return None
+    byk = {(r["year"], r["schoolCode"]): r for r in ctx["records"]}
+
+    # 以「學年 × 學校」為單位彙總，避免同校多年級重複計入而灌水樣本數
+    school_year = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for r in rows:
+        if has_data(r):
+            b = school_year[(r["year"], r["schoolCode"])][r["subject"]]
+            b[0] += denom(r)
+            b[1] += r["notPass"] or 0
+
+    # ① 偏遠分級
+    tier_years = sorted(set(ctx["meta"]["tierYears"]) & set(YEARS))
+    tier = {}
+    for subj in SUBJECTS:
+        buckets = defaultdict(lambda: [0, 0, set()])
+        for (y, code), subs in school_year.items():
+            if y not in tier_years or subj not in subs:
+                continue
+            t = byk.get((y, code), {}).get("tier")
+            if not t:
+                continue
+            b = buckets[t]
+            b[0] += subs[subj][0]
+            b[1] += subs[subj][1]
+            b[2].add(code)
+        tier[subj] = [
+            {"tier": t, "registered": b[0], "notPass": b[1],
+             "rate": r4(rate(b[1], b[0])), "schools": len(b[2])}
+            for t in ctx["meta"]["tierOrder"] if (b := buckets.get(t)) and b[0]
+        ]
+
+    # ② 師生比（僅國小、112–114），同時給原始相關與控制規模後的偏相關
+    basec_years = sorted(set(ctx["meta"]["basecYears"]) & set(YEARS))
+    elem = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for r in rows:
+        if has_data(r) and r["grade"] <= 6:
+            b = elem[(r["year"], r["schoolCode"])][r["subject"]]
+            b[0] += denom(r)
+            b[1] += r["notPass"] or 0
+
+    teacher = {}
+    for subj in SUBJECTS:
+        xs, ys, zs, pts = [], [], [], []
+        for (y, code), subs in elem.items():
+            if y not in basec_years or subj not in subs:
+                continue
+            c = byk.get((y, code))
+            if not c or not c.get("studentsPerTeacher") or not c.get("elemStudents"):
+                continue
+            d, n = subs[subj]
+            if d < MIN_REGISTERED:
+                continue
+            xs.append(c["studentsPerTeacher"])
+            ys.append(n / d)
+            zs.append(c["elemStudents"])
+            pts.append({"ratio": c["studentsPerTeacher"], "rate": r4(n / d),
+                        "size": c["elemStudents"], "year": y})
+        # 依師生比分層，讓讀者看到共線性如何運作
+        strata = []
+        for lo, hi, label in [(0, 4, "< 4"), (4, 6, "4–6"), (6, 8, "6–8"), (8, 99, "≥ 8")]:
+            g = [p for p in pts if lo <= p["ratio"] < hi]
+            if g:
+                strata.append({
+                    "label": label, "n": len(g),
+                    "rate": r4(sum(p["rate"] for p in g) / len(g)),
+                    "meanSize": round(sum(p["size"] for p in g) / len(g)),
+                })
+        teacher[subj] = {
+            "n": len(xs),
+            "r": r4(pearson(xs, ys)),
+            "rPartial": r4(partial_corr(xs, ys, zs)),
+            "rSizeRate": r4(pearson(zs, ys)),
+            "rRatioSize": r4(pearson(xs, zs)),
+            "strata": strata,
+            "points": pts,
+        }
+
+    # ③ 原住民學生比率
+    indigenous = {}
+    for subj in SUBJECTS:
+        xs, ys = [], []
+        for (y, code), subs in school_year.items():
+            if y not in tier_years or subj not in subs:
+                continue
+            c = byk.get((y, code))
+            if not c or c.get("indigenousPct") is None:
+                continue
+            d, n = subs[subj]
+            if d < MIN_REGISTERED:
+                continue
+            xs.append(c["indigenousPct"])
+            ys.append(n / d)
+        indigenous[subj] = {"n": len(xs), "r": r4(pearson(xs, ys))}
+
+    return {
+        "tierYears": tier_years,
+        "basecYears": basec_years,
+        "tier": tier,
+        "teacher": teacher,
+        "indigenous": indigenous,
+        "notes": ctx["meta"]["notes"],
+    }
+
+
 # ───────────────── 對帳摘要（供前端揭露） ─────────────────
 def reconciliation(rows):
     import statistics
@@ -511,10 +645,13 @@ def reconciliation(rows):
 
 def main():
     rows = json.loads((OUT / "remedial.json").read_text(encoding="utf-8"))
+    ctx_path = OUT / "context.json"
+    ctx = json.loads(ctx_path.read_text(encoding="utf-8")) if ctx_path.exists() else None
 
     trend = county_trend_and_forecast(rows)
     risk, k_used = school_risk(rows)
     bt = backtest(rows)
+    context = context_analysis(rows, ctx)
 
     data = {
         "meta": {
@@ -546,6 +683,7 @@ def main():
         "nationalGap": national_gap(rows),
         "risk": risk,
         "persistent": persistent_underperformers(risk),
+        "context": context,
     }
 
     (OUT / "analytics.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -571,6 +709,21 @@ def main():
     for s in SUBJECTS:
         print(f"  {s}: K={k_used[s]['k']} (校間真實變異 tau2={k_used[s]['tau2']}, "
               f"{k_used[s]['schools']} 校)")
+
+    if context:
+        print(f"\n偏遠分級 × 未通過率（{context['tierYears'][0]}–{context['tierYears'][-1]} 學年）:")
+        for s in SUBJECTS:
+            parts = [f"{t['tier']} {t['rate']:.1%}(n={t['registered']})" for t in context["tier"][s]]
+            print(f"  {s}: " + "  ".join(parts))
+        print(f"\n師生比 × 未通過率（國小 {context['basecYears'][0]}–{context['basecYears'][-1]}）:")
+        for s in SUBJECTS:
+            t = context["teacher"][s]
+            print(f"  {s}: 原始 r={t['r']:+.3f} -> 控制規模後偏相關 r={t['rPartial']:+.3f} "
+                  f"(n={t['n']}, 規模vs未通過率 r={t['rSizeRate']:+.3f})")
+        print("\n原住民比率 × 未通過率:")
+        for s in SUBJECTS:
+            i = context["indigenous"][s]
+            print(f"  {s}: r={i['r']:+.3f} (n={i['n']})")
 
 
 if __name__ == "__main__":

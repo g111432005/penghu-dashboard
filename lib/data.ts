@@ -161,6 +161,44 @@ export interface PersistentItem {
   subjects: Record<string, { yearsAboveCounty: number; yearsObserved: number; riskScore: number | null }>
 }
 
+/* ── 學校脈絡變數（教育部公開資料） ── */
+
+export interface TierEntry {
+  tier: string
+  registered: number
+  notPass: number
+  rate: number | null
+  schools: number
+}
+
+export interface TeacherStratum {
+  label: string
+  n: number
+  rate: number | null
+  meanSize: number
+}
+
+export interface TeacherAnalysis {
+  n: number
+  /* 原始相關 */
+  r: number | null
+  /* 控制學校規模後的偏相關——這才是可解讀的數字 */
+  rPartial: number | null
+  rSizeRate: number | null
+  rRatioSize: number | null
+  strata: TeacherStratum[]
+  points: { ratio: number; rate: number | null; size: number; year: number }[]
+}
+
+export interface ContextAnalysis {
+  tierYears: number[]
+  basecYears: number[]
+  tier: Record<Subject, TierEntry[]>
+  teacher: Record<Subject, TeacherAnalysis>
+  indigenous: Record<Subject, { n: number; r: number | null }>
+  notes: Record<string, string>
+}
+
 export interface Analytics {
   meta: {
     years: number[]
@@ -183,6 +221,7 @@ export interface Analytics {
   nationalGap: Record<Subject, NationalGapPoint[]>
   risk: Record<Subject, RiskItem[]>
   persistent: PersistentItem[]
+  context: ContextAnalysis | null
 }
 
 const basePath = process.env.NODE_ENV === 'production' ? '/penghu-dashboard' : ''

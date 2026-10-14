@@ -283,6 +283,65 @@ def check_summary(rep, rows, summary, analytics):
               "\n".join(bad[:5]) if bad else "")
 
 
+# ─────────────────── 8. 公開資料脈絡變數 ───────────────────
+def check_context(rep, rows, analytics):
+    print("\n8. 公開資料脈絡變數（偏遠分級／師生比）")
+
+    p = DATA / "context.json"
+    if not p.exists():
+        rep.note("context.json 不存在，略過（請先執行 parse_context.py）")
+        return
+    ctx = json.loads(p.read_text(encoding="utf-8"))
+    recs = ctx["records"]
+
+    overlap = sorted(set(ctx["meta"]["tierYears"]) & set(YEARS))
+    name = {r["schoolCode"]: r["schoolName"] for r in rows if r["schoolCode"] and r["schoolName"]}
+
+    # 串接率：偏遠名錄只收錄「該年度經指定為偏遠」的學校，停辦或未指定者會缺席，
+    # 故不要求 100%，但低於 90% 就代表串接鍵壞了（例如代碼格式改變）。
+    lines, worst = [], 1.0
+    for y in overlap:
+        mine = {r["schoolCode"] for r in rows if r["year"] == y and r["schoolCode"]}
+        theirs = {r["schoolCode"] for r in recs if r["year"] == y and r.get("tier")}
+        miss = mine - theirs
+        cov = (len(mine) - len(miss)) / len(mine) if mine else 1.0
+        worst = min(worst, cov)
+        note = f"{y}: {cov:.0%} ({len(mine) - len(miss)}/{len(mine)})"
+        if miss:
+            note += " 缺: " + "、".join(f"{name.get(c, c)}" for c in sorted(miss))
+        lines.append(note)
+    rep.check(worst >= 0.90, "偏遠分級對測驗年度學校的涵蓋率 ≥ 90%", "\n".join(lines))
+    rep.note("缺席者經查為停辦／併校（如「[停用]縣立志清國中」），非串接失敗")
+
+    # 僅比對重疊年度：偏遠名錄涵蓋 104 起，早年停辦的學校本就不在測驗資料中
+    orphan = {r["schoolCode"] for r in recs if r["year"] in overlap} - \
+             {r["schoolCode"] for r in rows if r["schoolCode"]}
+    rep.check(not orphan, "重疊年度內沒有測驗資料查無的學校代碼",
+              f"多出 {len(orphan)} 校: {sorted(orphan)[:5]}" if orphan else
+              f"比對年度 {overlap[0]}–{overlap[-1]}")
+
+    tiers = {r.get("tier") for r in recs if r.get("tier")}
+    rep.check(tiers <= set(ctx["meta"]["tierOrder"]), "分級值皆為已知類別",
+              f"未知: {tiers - set(ctx['meta']['tierOrder'])}")
+
+    # 澎湖外島小校的教師數可多於學生數（虎井國小 2 生 6 師），師生比小於 1 是真實情況
+    ratios = [r["studentsPerTeacher"] for r in recs if r.get("studentsPerTeacher")]
+    ok = all(0.2 <= v <= 40 for v in ratios) if ratios else True
+    rep.check(ok, "師生比落在合理範圍 (0.2–40)",
+              f"n={len(ratios)}, 範圍 {min(ratios):.2f}–{max(ratios):.2f}"
+              if ratios else "無資料")
+    rep.note("小於 1 為真實值：離島極小型學校的教師數多於學生數")
+
+    if analytics and analytics.get("context"):
+        c = analytics["context"]
+        # 偏相關必須存在：師生比的原始相關會誤導，分析必須控制規模
+        missing_partial = [s for s in SUBJECTS if c["teacher"][s].get("rPartial") is None]
+        rep.check(not missing_partial, "師生比分析已計算控制規模後的偏相關",
+                  f"缺少: {missing_partial}" if missing_partial else
+                  "  ".join(f"{s}: r={c['teacher'][s]['r']} -> 偏相關={c['teacher'][s]['rPartial']}"
+                            for s in SUBJECTS))
+
+
 def main():
     rows, summary, analytics = load()
     rep = Report()
@@ -299,6 +358,7 @@ def main():
     check_roster(rep, rows)
     check_cohorts(rep, rows)
     check_summary(rep, rows, summary, analytics)
+    check_context(rep, rows, analytics)
 
     print("\n" + "=" * 68)
     print(f"通過 {rep.passed} 項，失敗 {rep.failed} 項")

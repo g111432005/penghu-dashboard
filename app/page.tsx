@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   School, Users, AlertTriangle, TrendingUp, LayoutGrid, Table as TableIcon, Loader2,
-  BookOpen, Layers, Map as MapIcon, Siren, GitCompare, Baby, FlaskConical,
+  BookOpen, Layers, Map as MapIcon, Siren, GitCompare, Baby, FlaskConical, Scale,
 } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter, ErrorBar,
@@ -110,7 +110,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 }
 
 const TABS = [
-  '總覽', '跨年趨勢', '年級斷點', '世代追蹤', '城鄉落差', '學校比較', '風險預警', '關聯分析', '方法論', '明細表',
+  '總覽', '跨年趨勢', '年級斷點', '世代追蹤', '城鄉落差', '學校比較', '影響因素', '風險預警', '關聯分析', '方法論', '明細表',
 ] as const
 type Tab = typeof TABS[number]
 const ic = 'w-3.5 h-3.5'
@@ -121,6 +121,7 @@ const TAB_ICON: Record<Tab, React.ReactNode> = {
   '世代追蹤': <Baby className={ic} />,
   '城鄉落差': <MapIcon className={ic} />,
   '學校比較': <School className={ic} />,
+  '影響因素': <Scale className={ic} />,
   '風險預警': <Siren className={ic} />,
   '關聯分析': <GitCompare className={ic} />,
   '方法論': <FlaskConical className={ic} />,
@@ -1053,6 +1054,180 @@ function CorrelationTab({ an }: { an: Analytics }) {
   )
 }
 
+/* ══════════════════════ 影響因素 ══════════════════════ */
+function ContextTab({ an }: { an: Analytics }) {
+  const [subject, setSubject] = useState<Subject>('數學')
+  const ctx = an.context
+
+  if (!ctx) {
+    return <Card title="影響因素">
+      <p className="text-sm text-slate-500">尚未產生脈絡資料（請執行 scripts/parse_context.py）。</p>
+    </Card>
+  }
+
+  const tiers = ctx.tier[subject]
+  const tch = ctx.teacher[subject]
+  const indi = ctx.indigenous[subject]
+  const maxTierRate = Math.max(...tiers.map(t => t.rate ?? 0))
+  // 樣本過少的分級不足以解讀，單獨標示而非混在一起比較
+  const solid = tiers.filter(t => t.registered >= 200)
+  const thin = tiers.filter(t => t.registered < 200)
+
+  return (
+    <div className="space-y-6">
+      <SubjectPicker value={subject} onChange={setSubject} />
+
+      <Card title={`偏遠分級 × ${subject}未通過率（${ctx.tierYears[0]}–${ctx.tierYears[ctx.tierYears.length - 1]} 學年）`}>
+        <ResponsiveContainer width="100%" height={Math.max(200, tiers.length * 56)}>
+          <BarChart data={tiers} layout="vertical" margin={{ left: 16, right: 48 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+            <XAxis type="number" domain={[0, topDomain(maxTierRate)]}
+              tickFormatter={v => fmtPct(v)} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+            <YAxis type="category" dataKey="tier" width={60}
+              tick={{ fill: '#475569', fontSize: 12 }} />
+            <Tooltip formatter={(v: number, _n, p) =>
+              [`${fmtPct(v)}（應考 ${p.payload.registered.toLocaleString()} 人次 · ${p.payload.schools} 校）`,
+                '未通過率']} />
+            <Bar dataKey="rate" radius={[0, 4, 4, 0]} maxBarSize={30}
+              fill={SUBJECT_COLOR[subject]} />
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="overflow-x-auto mt-2">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="py-2 pr-4">分級</th>
+                <th className="py-2 pr-4 text-right">未通過率</th>
+                <th className="py-2 pr-4 text-right">應考人次</th>
+                <th className="py-2 pr-4 text-right">校數</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tiers.map(t => (
+                <tr key={t.tier} className="border-b border-slate-50">
+                  <td className="py-1.5 pr-4">
+                    {t.tier}
+                    {t.registered < 200 && (
+                      <span className="ml-2 text-xs text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                        樣本過少
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums font-medium">{fmtPct(t.rate)}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">
+                    {t.registered.toLocaleString()}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">{t.schools}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ChartNote>
+          資料來源：教育部「偏遠地區學校名錄」。
+          {solid.length >= 2 && (
+            <> 「{solid[0].tier}」與「{solid[solid.length - 1].tier}」相差{' '}
+              <b>{fmtPP((solid[solid.length - 1].rate ?? 0) - (solid[0].rate ?? 0), false)}</b>，
+              樣本充足（各 {solid.map(t => t.registered.toLocaleString()).join(' / ')} 人次）。</>
+          )}
+          {thin.length > 0 && (
+            <> {thin.map(t => t.tier).join('、')} 僅 {thin.map(t => t.registered).join('/')} 人次，
+              樣本過少，不足以解讀。</>
+          )}
+          {' '}115 學年無對應分級資料，未納入。
+        </ChartNote>
+      </Card>
+
+      <Card title={`師生比 × ${subject}未通過率（國小，${ctx.basecYears[0]}–${ctx.basecYears[ctx.basecYears.length - 1]} 學年）`}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="card !p-4">
+            <div className="stat-label">原始相關 r</div>
+            <div className="text-2xl font-bold text-slate-400 tabular-nums">
+              {tch.r?.toFixed(3) ?? '—'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">未控制任何變數</div>
+          </div>
+          <div className="card !p-4 ring-2 ring-ph-navy/20">
+            <div className="stat-label">控制規模後偏相關 r</div>
+            <div className="text-2xl font-bold text-ph-navy tabular-nums">
+              {tch.rPartial?.toFixed(3) ?? '—'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">這才是可解讀的數字</div>
+          </div>
+          <div className="card !p-4">
+            <div className="stat-label">學校規模 × 未通過率</div>
+            <div className="text-2xl font-bold text-slate-400 tabular-nums">
+              {tch.rSizeRate?.toFixed(3) ?? '—'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">規模才是真正的關聯</div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="py-2 pr-4">師生比級距</th>
+                <th className="py-2 pr-4 text-right">校年次</th>
+                <th className="py-2 pr-4 text-right">平均未通過率</th>
+                <th className="py-2 pr-4 text-right">平均學校規模</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tch.strata.map(s => (
+                <tr key={s.label} className="border-b border-slate-50">
+                  <td className="py-1.5 pr-4">{s.label}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">{s.n}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums font-medium">{fmtPct(s.rate)}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">
+                    {s.meanSize} 人
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <Caveat>
+          <b>師生比的表面關聯是學校規模造成的假象。</b>
+          原始相關為 {tch.r?.toFixed(3)}（看似「師生比越低、未通過率越高」），
+          但控制學校規模後降為 <b>{tch.rPartial?.toFixed(3)}</b>
+          {Math.abs(tch.rPartial ?? 0) < 0.1 ? '，幾乎歸零' : ''}。
+          <br /><br />
+          原因見上表：師生比最低的級距同時也是規模最小的學校
+          （澎湖師生比低至 1:2.3 的學校就是極小型離島校）。
+          真正與未通過率相關的是規模（r = {tch.rSizeRate?.toFixed(3)}），不是師資配置。
+          <b>不可解讀為「增加教師能降低未通過率」</b>——本資料無法支持這個結論。
+        </Caveat>
+      </Card>
+
+      <Card title={`原住民學生比率 × ${subject}未通過率`}>
+        <div className="flex items-baseline gap-3">
+          <span className="text-3xl font-bold text-ph-navy tabular-nums">
+            {indi.r?.toFixed(3) ?? '—'}
+          </span>
+          <span className="text-sm text-slate-500">Pearson r（n = {indi.n} 校年次）</span>
+        </div>
+        <ChartNote>
+          資料來源：教育部偏遠地區學校名錄的「原住民學生比率」欄位。
+          相關為正但偏弱，且澎湖多數學校該比率為 0，變異有限。
+          同樣<b>不宜做因果解讀</b>——此比率與學校所在地、規模、分級高度交織。
+        </ChartNote>
+      </Card>
+
+      <Card title="資料來源與涵蓋範圍">
+        <ul className="space-y-2 text-sm text-slate-600 leading-relaxed list-disc pl-5">
+          {Object.values(ctx.notes).map((n, i) => <li key={i}>{n}</li>)}
+          <li>
+            學校代碼與篩選測驗資料的比對率為 <b>100%</b>
+            （111–114 學年各年度 51/51、51/51、48/48、47/47 校）。
+          </li>
+        </ul>
+      </Card>
+    </div>
+  )
+}
+
 /* ══════════════════════ 方法論 ══════════════════════ */
 function MethodTab({ an }: { an: Analytics }) {
   const bt = an.backtest
@@ -1385,6 +1560,7 @@ export default function Home() {
       {tab === '世代追蹤' && <CohortTab an={an} />}
       {tab === '城鄉落差' && <DistrictTab an={an} />}
       {tab === '學校比較' && <SchoolTab remedial={remedial} an={an} />}
+      {tab === '影響因素' && <ContextTab an={an} />}
       {tab === '風險預警' && <RiskTab an={an} />}
       {tab === '關聯分析' && <CorrelationTab an={an} />}
       {tab === '方法論' && <MethodTab an={an} />}
