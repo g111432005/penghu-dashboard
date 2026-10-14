@@ -29,7 +29,45 @@ export interface RemedialSummaryRow {
 
 /* ── analytics.json (由 scripts/analyze_remedial.py 預先算好) ── */
 
-export interface TrendPoint { year: number; attendees: number; notPass: number; rate: number | null }
+export interface TrendPoint {
+  year: number
+  registered: number
+  notPass: number
+  rate: number | null
+  /* 原始檔公布的官方縣值，用於對帳 */
+  officialRate: number | null
+}
+
+export interface ReconciliationRow {
+  year: number
+  groups: number
+  maxDiffPP: number | null
+  medianDiffPP: number | null
+}
+
+export interface BacktestCounty {
+  actual: number | null
+  predicted: number | null
+  naive: number | null
+  error: number | null
+  naiveError: number | null
+  inInterval: boolean
+}
+
+export interface BacktestSchool {
+  n: number
+  mae: number | null
+  naiveMae: number | null
+  coverage: number | null
+  shrinkK: number | null
+}
+
+export interface Backtest {
+  trainYears: number[]
+  testYear: number
+  county: Record<Subject, BacktestCounty>
+  school: Record<Subject, BacktestSchool>
+}
 
 export interface CountyTrend {
   series: TrendPoint[]
@@ -39,7 +77,7 @@ export interface CountyTrend {
 
 export interface GradeProfilePoint {
   grade: number
-  attendees: number
+  registered: number
   rate: number | null
   delta: number | null
 }
@@ -47,18 +85,20 @@ export interface GradeProfilePoint {
 export interface DistrictEntry {
   district: string
   rate: number | null
-  attendees: number
-  years: { year: number; rate: number | null; attendees: number }[]
+  registered: number
+  years: { year: number; rate: number | null; registered: number }[]
 }
 
-export interface CohortPoint { grade: number; year: number; attendees: number; rate: number | null }
-export interface Cohort { cohort: number; label: string; points: CohortPoint[] }
+export interface CohortPoint { grade: number; year: number; registered: number; rate: number | null }
+export interface Cohort { cohort: number; points: CohortPoint[]; sizeVariation: number | null }
 
 export interface CorrelationPair {
   a: Subject
   b: Subject
   n: number
   r: number | null
+  /* Fisher z 轉換的 95% 信賴區間 */
+  ci?: [number, number] | null
   scatter?: { x: number; y: number }[]
 }
 
@@ -89,7 +129,7 @@ export interface RiskSeriesPoint {
   year: number
   raw: number | null
   shrunk: number | null
-  attendees: number
+  registered: number
   county: number | null
 }
 
@@ -101,7 +141,7 @@ export interface RiskItem {
   yearsAboveCounty: number
   latestShrunk: number | null
   latestRaw: number | null
-  latestAttendees: number
+  latestRegistered: number
   slopePerYear: number | null
   forecast: number | null
   forecastLo: number | null
@@ -126,10 +166,14 @@ export interface Analytics {
     years: number[]
     forecastYear: number
     subjects: Subject[]
-    shrinkK: number
-    minAttendees: number
+    /* 各科由資料估計的收縮強度 */
+    shrinkK: Record<Subject, { k: number | null; tau2: number | null; schools: number }>
+    minRegistered: number
+    denominator: string
     notes: Record<string, string>
   }
+  reconciliation: ReconciliationRow[]
+  backtest: Backtest
   countyTrend: Record<Subject, CountyTrend>
   gradeProfile: Record<Subject, GradeProfilePoint[]>
   district: { districts: string[]; bySubject: Record<Subject, DistrictEntry[]> }

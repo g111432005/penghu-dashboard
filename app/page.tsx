@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   School, Users, AlertTriangle, TrendingUp, LayoutGrid, Table as TableIcon, Loader2,
-  BookOpen, Layers, Map as MapIcon, Siren, GitCompare, Baby,
+  BookOpen, Layers, Map as MapIcon, Siren, GitCompare, Baby, FlaskConical,
 } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter, ErrorBar,
@@ -110,7 +110,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 }
 
 const TABS = [
-  '總覽', '跨年趨勢', '年級斷點', '世代追蹤', '城鄉落差', '學校比較', '風險預警', '關聯分析', '明細表',
+  '總覽', '跨年趨勢', '年級斷點', '世代追蹤', '城鄉落差', '學校比較', '風險預警', '關聯分析', '方法論', '明細表',
 ] as const
 type Tab = typeof TABS[number]
 const ic = 'w-3.5 h-3.5'
@@ -123,6 +123,7 @@ const TAB_ICON: Record<Tab, React.ReactNode> = {
   '學校比較': <School className={ic} />,
   '風險預警': <Siren className={ic} />,
   '關聯分析': <GitCompare className={ic} />,
+  '方法論': <FlaskConical className={ic} />,
   '明細表': <TableIcon className={ic} />,
 }
 
@@ -412,7 +413,7 @@ function GradeTab({ an }: { an: Analytics }) {
             <YAxis domain={[0, topDomain(maxRate)]} tickFormatter={v => fmtPct(v)}
               tick={{ fill: '#94a3b8', fontSize: 11 }} />
             <Tooltip formatter={(v: number, _n, p) =>
-              [`${fmtPct(v)}（到考 ${p.payload.attendees.toLocaleString()} 人）`, '未通過率']} />
+              [`${fmtPct(v)}（應考 ${p.payload.registered.toLocaleString()} 人）`, '未通過率']} />
             <Bar dataKey="rate" radius={[4, 4, 0, 0]} fill={SUBJECT_COLOR[subject]} maxBarSize={56} />
           </BarChart>
         </ResponsiveContainer>
@@ -477,11 +478,11 @@ function CohortTab({ an }: { an: Analytics }) {
   }, [cohorts])
 
   const deltas = cohorts.map(c => ({
-    label: c.label,
     cohort: c.cohort,
     from: c.points[0],
     to: c.points[c.points.length - 1],
     delta: (c.points[c.points.length - 1].rate ?? 0) - (c.points[0].rate ?? 0),
+    sizeVariation: c.sizeVariation,
   }))
   const meanDelta = deltas.length
     ? deltas.reduce((s, d) => s + d.delta, 0) / deltas.length : null
@@ -528,6 +529,7 @@ function CohortTab({ an }: { an: Analytics }) {
                 <th className="py-2 pr-4 text-right">起始未通過率</th>
                 <th className="py-2 pr-4 text-right">最新未通過率</th>
                 <th className="py-2 pr-4 text-right">變化</th>
+                <th className="py-2 pr-4 text-right">人數變動</th>
               </tr>
             </thead>
             <tbody>
@@ -546,6 +548,9 @@ function CohortTab({ an }: { an: Analytics }) {
                     ${d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                     {fmtPP(d.delta)}
                   </td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-400">
+                    {fmtPct(d.sizeVariation)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -556,7 +561,8 @@ function CohortTab({ an }: { an: Analytics }) {
           {(meanDelta ?? 0) > 0
             ? '正值代表同一屆學生隨年級升高，未通過率反而惡化 — 落差隨學程累積，越晚介入成本越高。'
             : '負值代表同一屆學生隨年級升高逐步改善。'}
-          {' '}注意：此為同一屆的整體率變化，學生組成會因轉入轉出而略有變動。
+          {' '}「人數變動」欄為該世代歷年應考人數的最大變動幅度，用以檢驗追蹤前提是否成立；
+          數值越小代表越接近同一群學生。全部世代皆在 10% 以內。
         </ChartNote>
       </Card>
     </div>
@@ -568,8 +574,8 @@ function DistrictTab({ an }: { an: Analytics }) {
   const [subject, setSubject] = useState<Subject>('數學')
   const entries = an.district.bySubject[subject]
   const countyRate = useMemo(() => {
-    const a = entries.reduce((s, e) => s + e.attendees, 0)
-    const n = entries.reduce((s, e) => s + e.attendees * (e.rate ?? 0), 0)
+    const a = entries.reduce((s, e) => s + e.registered, 0)
+    const n = entries.reduce((s, e) => s + e.registered * (e.rate ?? 0), 0)
     return a ? n / a : null
   }, [entries])
   const maxRate = Math.max(...entries.map(e => e.rate ?? 0))
@@ -589,7 +595,7 @@ function DistrictTab({ an }: { an: Analytics }) {
             <YAxis type="category" dataKey="district" width={70}
               tick={{ fill: '#475569', fontSize: 12 }} />
             <Tooltip formatter={(v: number, _n, p) =>
-              [`${fmtPct(v)}（到考 ${p.payload.attendees.toLocaleString()} 人次）`, '未通過率']} />
+              [`${fmtPct(v)}（應考 ${p.payload.registered.toLocaleString()} 人次）`, '未通過率']} />
             {countyRate != null && (
               <ReferenceLine x={countyRate} stroke="#0b3d59" strokeDasharray="4 3"
                 label={{ value: `全縣 ${fmtPct(countyRate)}`, position: 'top',
@@ -708,20 +714,23 @@ function SchoolTab({ remedial, an }: { remedial: RemedialRow[]; an: Analytics })
 
   const data = useMemo(() => {
     const rows = remedial.filter(r => r.year === year && r.subject === subject && r.schoolName)
-    const bySchool = new Map<string, { school: string; attendees: number; notPass: number }>()
+    const bySchool = new Map<string, { school: string; registered: number; notPass: number }>()
     rows.forEach(r => {
+      // 分母採應考人數，與官方【縣市】年級未通過率定義一致（見 METHODOLOGY.md §2）
+      const d = r.testTakers || r.attendees || 0
+      if (!d) return
       const key = r.schoolName!
-      const cur = bySchool.get(key) ?? { school: key, attendees: 0, notPass: 0 }
-      cur.attendees += r.attendees ?? 0
+      const cur = bySchool.get(key) ?? { school: key, registered: 0, notPass: 0 }
+      cur.registered += d
       cur.notPass += r.notPass ?? 0
       bySchool.set(key, cur)
     })
     return Array.from(bySchool.values())
-      .filter(s => s.attendees >= an.meta.minAttendees)
-      .map(s => ({ ...s, rate: s.notPass / s.attendees }))
+      .filter(s => s.registered >= an.meta.minRegistered)
+      .map(s => ({ ...s, rate: s.notPass / s.registered }))
       .sort((a, b) => b.rate - a.rate)
       .slice(0, 20)
-  }, [remedial, year, subject, an.meta.minAttendees])
+  }, [remedial, year, subject, an.meta.minRegistered])
 
   const persistent = an.persistent.filter(p => (p.totalObserved ?? 0) >= 9).slice(0, 15)
 
@@ -736,7 +745,7 @@ function SchoolTab({ remedial, an }: { remedial: RemedialRow[]; an: Analytics })
       </div>
       <SubjectPicker value={subject} onChange={setSubject} />
 
-      <Card title={`${year}學年 ${subject}未通過率最高 20 校（全年級合計，到考 ≥ ${an.meta.minAttendees} 人）`}>
+      <Card title={`${year}學年 ${subject}未通過率最高 20 校（全年級合計，應考 ≥ ${an.meta.minRegistered} 人）`}>
         <ResponsiveContainer width="100%" height={Math.max(320, data.length * 26)}>
           <BarChart data={data} layout="vertical" margin={{ left: 40 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
@@ -744,7 +753,7 @@ function SchoolTab({ remedial, an }: { remedial: RemedialRow[]; an: Analytics })
               tickFormatter={v => fmtPct(v)} tick={{ fill: '#94a3b8', fontSize: 11 }} />
             <YAxis type="category" dataKey="school" width={160} tick={{ fontSize: 11, fill: '#475569' }} />
             <Tooltip formatter={(v: number, _n, p) =>
-              [`${fmtPct(v)}（到考 ${p.payload.attendees} 人）`, '未通過率']} />
+              [`${fmtPct(v)}（應考 ${p.payload.registered} 人）`, '未通過率']} />
             <Bar dataKey="rate" radius={[0, 4, 4, 0]}>
               {data.map(s => (
                 <Cell key={s.school}
@@ -765,8 +774,8 @@ function SchoolTab({ remedial, an }: { remedial: RemedialRow[]; an: Analytics })
           </span>
         </div>
         <ChartNote>
-          未通過率 = 該校該科全年級未通過人數 ÷ 到考人數合計。
-          到考未達 {an.meta.minAttendees} 人的學校已排除（個位數學生會使比率極不穩定）。
+          未通過率 = 該校該科全年級未通過人數 ÷ 應考人數合計。
+          應考未達 {an.meta.minRegistered} 人的學校已排除（個位數學生會使比率極不穩定）。
         </ChartNote>
       </Card>
 
@@ -842,7 +851,7 @@ function RiskTab({ an }: { an: Analytics }) {
                   <div className="font-medium text-slate-800">{p.school}</div>
                   <div className="text-slate-500">{p.district}</div>
                   <div className="text-slate-500">115 原始率 {fmtPct(p.latestRaw)}
-                    （到考 {p.latestAttendees} 人）</div>
+                    （應考 {p.latestRegistered} 人）</div>
                   <div className="text-slate-500">收縮後 {fmtPct(p.latestShrunk)}</div>
                   <div className="text-slate-500">趨勢 {fmtPP(p.slopePerYear)}/學年</div>
                   <div className="text-slate-500">{an.meta.forecastYear} 推估 {fmtPct(p.forecast)}</div>
@@ -870,8 +879,9 @@ function RiskTab({ an }: { an: Analytics }) {
           </span>
         </div>
         <ChartNote>
-          風險分數 = 收縮後的 {an.meta.forecastYear} 推估值 × (0.75 + 0.25 × 長期落後比例)。
-          分數本身是「相對排序用的指標」，不是預測的未通過率。
+          風險分數 = <b>最新（115）收縮後未通過率</b> × (0.75 + 0.25 × 長期落後比例)。
+          刻意<b>不採用</b> {an.meta.forecastYear} 推估值——回測顯示線性外推不如樸素基準，
+          詳見「方法論」頁。分數本身是「相對排序用的指標」，不是預測的未通過率。
         </ChartNote>
       </Card>
 
@@ -884,9 +894,11 @@ function RiskTab({ an }: { an: Analytics }) {
                 <th className="py-2 pr-4">行政區</th>
                 <th className="py-2 pr-3 text-right">115 原始</th>
                 <th className="py-2 pr-3 text-right">115 收縮後</th>
-                <th className="py-2 pr-3 text-right">到考</th>
+                <th className="py-2 pr-3 text-right">應考</th>
                 <th className="py-2 pr-3 text-right">趨勢/學年</th>
-                <th className="py-2 pr-3 text-right">{an.meta.forecastYear} 推估</th>
+                <th className="py-2 pr-3 text-right font-normal text-slate-400">
+                  {an.meta.forecastYear} 推估（不可靠）
+                </th>
                 <th className="py-2 pr-3 text-right">高於縣均</th>
                 <th className="py-2 pr-3 text-right">風險</th>
               </tr>
@@ -903,15 +915,16 @@ function RiskTab({ an }: { an: Analytics }) {
                     {fmtPct(t.latestShrunk)}
                   </td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-400">
-                    {t.latestAttendees}
+                    {t.latestRegistered}
                   </td>
                   <td className={`py-1.5 pr-3 text-right tabular-nums
                     ${(t.slopePerYear ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                     {fmtPP(t.slopePerYear)}
                   </td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">
+                  {/* 刻意以淺色呈現：回測證實此推估不具預測力，視覺權重應與證據權重相符 */}
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-400">
                     {fmtPct(t.forecast)}
-                    <span className="text-slate-400 text-xs">
+                    <span className="text-xs">
                       {' '}[{fmtPct(t.forecastLo)}–{fmtPct(t.forecastHi)}]
                     </span>
                   </td>
@@ -938,15 +951,28 @@ function RiskTab({ an }: { an: Analytics }) {
           </p>
           <pre className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs
             overflow-x-auto text-slate-700">
-{`收縮後未通過率 = (未通過人數 + K × 縣平均) / (到考人數 + K)     K = ${an.meta.shrinkK}`}
+{`收縮後未通過率 = (未通過人數 + K × 縣平均) / (應考人數 + K)
+
+K 由資料估計（Beta-Binomial 動差法）  K = p(1-p) / τ²
+  ${SUBJECTS.map(s => `${s} K=${an.meta.shrinkK[s]?.k}`).join('   ')}`}
           </pre>
           <p>
-            到考人數遠大於 K 的大校幾乎不受影響；人數少的小校則被拉回縣平均，
+            應考人數遠大於 K 的大校幾乎不受影響；人數少的小校則被拉回縣平均，
             只有在落差「大到不像雜訊」時才會浮上來。
+            K 不是主觀設定的參數，而是由「校間真實變異 τ²」估計而得：
+            τ² 越大代表學校間確實存在實質差距，收縮就越輕。
+          </p>
+          <p>
+            <b className="text-slate-800">風險分數為何不採用 {an.meta.forecastYear} 推估值？</b>
+            因為回測顯示線性外推在本資料上<b>六項比較全數輸給</b>
+            「沿用最新值」的樸素基準（詳見「方法論」頁）。
+            既然趨勢外推沒有預測力，就不該讓它主導排序，
+            故分數以最新收縮值為基準，趨勢僅列為佐證欄位。
           </p>
           <Caveat>
             <b>請勿將推估值當成精確預測。</b>
-            每校僅 3–5 個年度觀測點，個別學校的 95% 預測區間通常寬達 20–40 個百分點。
+            每校僅 3–5 個年度觀測點，校級回測 MAE 達 5–10 個百分點，
+            個別學校的 95% 預測區間通常寬達 20–40 個百分點。
             本頁的用途是<b>排序與篩出值得關注的對象</b>，而非預告明年的實際數字。
             實務上應搭配學校訪談、師資與課程資訊再做判斷。
           </Caveat>
@@ -1014,7 +1040,7 @@ function CorrelationTab({ an }: { an: Analytics }) {
           </ScatterChart>
         </ResponsiveContainer>
         <ChartNote>
-          每個點是一個「學校 × 年級 × 學年」組合（兩科到考人數都 ≥ {an.meta.minAttendees} 人）。
+          每個點是一個「學校 × 年級 × 學年」組合（兩科應考人數都 ≥ {an.meta.minRegistered} 人）。
           灰色虛線為 45 度參考線：點落在線上方代表該組合的{p.b}比{p.a}更弱。
           Pearson r = {p.r?.toFixed(3) ?? '—'}，n = {p.n.toLocaleString()}。
         </ChartNote>
@@ -1022,6 +1048,219 @@ function CorrelationTab({ an }: { an: Analytics }) {
           相關不等於因果。高相關更可能反映共同的背後因素（學生社經背景、學校師資穩定度、
           小校規模效應），而非「國語文差導致數學差」。
         </Caveat>
+      </Card>
+    </div>
+  )
+}
+
+/* ══════════════════════ 方法論 ══════════════════════ */
+function MethodTab({ an }: { an: Analytics }) {
+  const bt = an.backtest
+  const anyBeaten = SUBJECTS.some(s => {
+    const c = bt.county[s]
+    return c.error != null && c.naiveError != null && c.error >= c.naiveError
+  })
+
+  return (
+    <div className="space-y-6">
+      <Card title="未通過率的分母定義">
+        <div className="space-y-3 text-sm text-slate-600 leading-relaxed">
+          <p>原始檔對同一件事提供兩種比率，分母不同：</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-100">
+                  <th className="py-2 pr-4">欄位</th>
+                  <th className="py-2 pr-4">定義</th>
+                  <th className="py-2 pr-4">分母</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-slate-50">
+                  <td className="py-1.5 pr-4">施測未通過率</td>
+                  <td className="py-1.5 pr-4 text-slate-500">實際受測者中未通過的比例</td>
+                  <td className="py-1.5 pr-4">到考人數</td>
+                </tr>
+                <tr className="border-b border-slate-50">
+                  <td className="py-1.5 pr-4">年級未通過率</td>
+                  <td className="py-1.5 pr-4 text-slate-500">該年級應受測學生中未通過的比例</td>
+                  <td className="py-1.5 pr-4 font-medium text-ph-navy">應考人數</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            本儀表板一律採<b className="text-slate-800">應考人數</b>為分母，與官方
+            【縣市】年級未通過率一致。112–115 學年到考率 100%，兩者相同；
+            111 學年有 13 筆缺考，唯有用應考人數才能重現官方公布值。
+          </p>
+        </div>
+      </Card>
+
+      <Card title="與官方公布值對帳">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="py-2 pr-4">學年</th>
+                <th className="py-2 pr-4 text-right">比對組數</th>
+                <th className="py-2 pr-4 text-right">最大差異</th>
+                <th className="py-2 pr-4 text-right">中位數差異</th>
+              </tr>
+            </thead>
+            <tbody>
+              {an.reconciliation.map(r => (
+                <tr key={r.year} className="border-b border-slate-50">
+                  <td className="py-1.5 pr-4">{r.year}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">{r.groups}</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums">{r.maxDiffPP?.toFixed(3)} pp</td>
+                  <td className="py-1.5 pr-4 text-right tabular-nums">{r.medianDiffPP?.toFixed(4)} pp</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ChartNote>
+          由各校資料由下而上加總，與原始檔官方縣值比對。112–115 的差異已達四捨五入極限
+          （公布值僅到小數點後兩位），可視為完全吻合。111 學年差異較大，原因是該年度
+          「各校明細」與「全縣彙總」出自略有出入的學生名冊快照——同一年級內三科差額完全相同
+          （最多 9 人，約 1.6%），若是解析錯誤則差額應隨科目而異。
+        </ChartNote>
+      </Card>
+
+      <Card title={`預測方法回測（以 ${bt.trainYears[0]}–${bt.trainYears[bt.trainYears.length - 1]} 預測 ${bt.testYear}）`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="py-2 pr-4">科目</th>
+                <th className="py-2 pr-3 text-right">實際</th>
+                <th className="py-2 pr-3 text-right">線性外推</th>
+                <th className="py-2 pr-3 text-right">誤差</th>
+                <th className="py-2 pr-3 text-right">樸素基準誤差</th>
+                <th className="py-2 pr-3 text-right">校級 MAE</th>
+                <th className="py-2 pr-3 text-right">校級樸素 MAE</th>
+                <th className="py-2 pr-3 text-right">區間涵蓋率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SUBJECTS.map(s => {
+                const c = bt.county[s], sc = bt.school[s]
+                const lost = c.error != null && c.naiveError != null && c.error >= c.naiveError
+                const scLost = sc.mae != null && sc.naiveMae != null && sc.mae >= sc.naiveMae
+                return (
+                  <tr key={s} className="border-b border-slate-50">
+                    <td className="py-1.5 pr-4">{s}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{fmtPct(c.actual)}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">
+                      {fmtPct(c.predicted)}
+                    </td>
+                    <td className={`py-1.5 pr-3 text-right tabular-nums ${lost ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {c.error != null ? `${(c.error * 100).toFixed(2)} pp` : '—'}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums font-medium">
+                      {c.naiveError != null ? `${(c.naiveError * 100).toFixed(2)} pp` : '—'}
+                    </td>
+                    <td className={`py-1.5 pr-3 text-right tabular-nums ${scLost ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {sc.mae != null ? `${(sc.mae * 100).toFixed(2)} pp` : '—'}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums font-medium">
+                      {sc.naiveMae != null ? `${(sc.naiveMae * 100).toFixed(2)} pp` : '—'}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">
+                      {fmtPct(sc.coverage)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {anyBeaten && (
+          <Caveat>
+            <b>線性趨勢外推在本資料上不具預測價值。</b>
+            六項比較（3 科 × 縣級/校級）全數輸給「沿用前一年數值」的樸素基準。
+            因此 {an.meta.forecastYear} 學年推估僅作為<b>趨勢線的視覺延伸</b>呈現，
+            不應作為目標值或規劃依據；「風險預警」頁的分數也不採用該推估值。
+            <br /><br />
+            預測區間涵蓋率為 {SUBJECTS.map(s => fmtPct(bt.school[s].coverage)).join(' / ')}，
+            代表不確定性量化本身是誠實的——區間確實涵蓋了實際值，只是點估計不可靠。
+            資料僅 5 個時間點，這個結果並不意外。
+          </Caveat>
+        )}
+      </Card>
+
+      <Card title="收縮強度 K（由資料估計）">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="py-2 pr-4">科目</th>
+                <th className="py-2 pr-4 text-right">K</th>
+                <th className="py-2 pr-4 text-right">校間真實變異 τ²</th>
+                <th className="py-2 pr-4 text-right">校數</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SUBJECTS.map(s => {
+                const k = an.meta.shrinkK[s]
+                return (
+                  <tr key={s} className="border-b border-slate-50">
+                    <td className="py-1.5 pr-4">{s}</td>
+                    <td className="py-1.5 pr-4 text-right tabular-nums font-medium">
+                      {k?.k?.toFixed(1)}
+                    </td>
+                    <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">
+                      {k?.tau2?.toFixed(4)}
+                    </td>
+                    <td className="py-1.5 pr-4 text-right tabular-nums text-slate-500">{k?.schools}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <ChartNote>
+          K = p(1−p)/τ²，其中 τ² = 校間觀測變異 − 二項抽樣期望變異。
+          K 越小代表校間差距越「真實」（不只是抽樣運氣），收縮就越輕。
+          這些值由資料估計而非主觀設定；先前使用的固定值 K=40 會過度抹平真實差異。
+        </ChartNote>
+      </Card>
+
+      <Card title="資料修正紀錄">
+        <ol className="space-y-2.5 text-sm text-slate-700 leading-relaxed list-decimal pl-5">
+          <li>
+            <b>114 學年解析位移</b>：工作表表頭列數判斷錯誤，導致馬公國小 15 筆資料
+            學校資訊遺失、1 筆完全消失。
+          </li>
+          <li>
+            <b>英語 1–2 年級的假 0%</b>：英語自 3 年級起施測，但原始檔在 1–2 年級填入
+            0 與 0.00%，原會被當成「未通過率 0%」畫進趨勢圖。已改為缺值。
+          </li>
+          <li>
+            <b>113 學年全國率</b>：該欄整欄為 0，代表未填寫而非全國未通過率真的是 0%。
+            已改為缺值，「縣 vs 全國」圖在該年斷線。
+          </li>
+        </ol>
+        <ChartNote>
+          以上問題皆已納入 <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">
+          scripts/validate_remedial.py</code> 的 18 項自動檢查，並接入 CI：
+          驗證不通過就不會部署，避免同類錯誤再度發生。
+        </ChartNote>
+      </Card>
+
+      <Card title="已知限制">
+        <ul className="space-y-2 text-sm text-slate-600 leading-relaxed list-disc pl-5">
+          <li>僅 5 個學年度，時間序列方法受限；線性外推已證實不優於樸素基準。</li>
+          <li>111 學年存在最多 9 人的名冊落差（約 1.6%），影響該年縣級數字的第二位小數。</li>
+          <li>113 學年無全國比較資料。</li>
+          <li>小校（個位數學生）的單年數字本質上不穩定，已以收縮處理，但仍不建議單獨解讀。</li>
+          <li>世代追蹤假設同一屆學生組成穩定；實測變動 1–6%，轉入轉出仍會造成輕微偏誤。</li>
+          <li>
+            本資料只有測驗結果，沒有師資、課程、學生社經背景等解釋變數，
+            因此只能描述「哪裡有落差」，無法回答「為什麼」。
+          </li>
+        </ul>
       </Card>
     </div>
   )
@@ -1148,6 +1387,7 @@ export default function Home() {
       {tab === '學校比較' && <SchoolTab remedial={remedial} an={an} />}
       {tab === '風險預警' && <RiskTab an={an} />}
       {tab === '關聯分析' && <CorrelationTab an={an} />}
+      {tab === '方法論' && <MethodTab an={an} />}
       {tab === '明細表' && <DetailTab remedial={remedial} an={an} />}
     </div>
   )

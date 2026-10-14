@@ -32,6 +32,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 資料驗證不通過就不部署：對帳、內部一致性、名冊落差等檢查
+      # 失敗時回傳非零離開碼，可擋下靜默損壞的資料。
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Validate data
+        run: python scripts/validate_remedial.py
+
       - name: Build
         run: npm run build
         env:
