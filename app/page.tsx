@@ -110,8 +110,7 @@ function OverviewTab({ summary, remedial }: { summary: RemedialSummaryRow[]; rem
           </BarChart>
         </ResponsiveContainer>
         <ChartNote>
-          此為 {latestYear} 學年度全縣加權平均未通過率（依各年級到考人數加權）。目前資料僅涵蓋 113、114 學年，
-          其餘年度待補齊後將自動納入跨年趨勢比較。
+          此為 {latestYear} 學年度全縣加權平均未通過率（依各年級到考人數加權）。
         </ChartNote>
       </div>
     </div>
@@ -330,7 +329,7 @@ export default function Home() {
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-6 animate-fade-in-up">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold text-ph-navy">澎湖縣學習扶助未通過率分析儀表板</h1>
-        <p className="text-sm text-slate-500">111–115 學年度學習扶助篩選測驗未通過率（目前已收錄 113、114 學年資料)</p>
+        <p className="text-sm text-slate-500">111–115 學年度學習扶助篩選測驗未通過率</p>
       </header>
 
       <nav className="flex gap-1.5 flex-wrap bg-white/60 backdrop-blur rounded-xl p-1.5 border border-slate-100">
