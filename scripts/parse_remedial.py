@@ -14,10 +14,44 @@ import pandas as pd
 
 RAW = Path(__file__).parent.parent / "data" / "raw"
 OUT = Path(__file__).parent.parent / "public" / "data"
+CACHE = RAW / ".cache"
 
 SUBJECTS = ["國語文", "數學", "英語"]
 # each subject block has 7 columns: 應考人數,到考人數,未通過人數,施測未通過率,年級未通過率,縣市年級未通過率,全國年級未通過率
 BLOCK_LEN = 7
+
+# 英語自 3 年級才施測，1-2 年級沒有測驗；原始檔會留下 0 / 0.00% 的空欄位，
+# 必須視為「未施測」而非「未通過率 0%」，否則趨勢圖會畫出假的 0% 資料點。
+NO_TEST = {("英語", 1), ("英語", 2)}
+
+
+def ensure_readable(path):
+    """111 年的 .xls 內部結構損壞，xlrd 無法讀取。若遇到讀不開的舊版 .xls，
+    就用本機 Excel 轉存一份 .xlsx 到 data/raw/.cache/ 後再讀（僅本機需要，
+    CI 只建置已產生的 JSON）。"""
+    try:
+        pd.ExcelFile(path)
+        return path
+    except Exception:
+        pass
+
+    CACHE.mkdir(exist_ok=True)
+    cached = CACHE / (path.stem + ".xlsx")
+    if cached.exists():
+        return cached
+
+    import win32com.client
+    excel = win32com.client.Dispatch("Excel.Application")
+    excel.Visible = False
+    excel.DisplayAlerts = False
+    try:
+        wb = excel.Workbooks.Open(str(path.resolve()))
+        wb.SaveAs(str(cached.resolve()), 51)  # 51 = xlOpenXMLWorkbook
+        wb.Close()
+    finally:
+        excel.Quit()
+    print(f"  (已轉存損壞的 {path.name} -> .cache/{cached.name})")
+    return cached
 
 
 def pct(v):
@@ -188,7 +222,7 @@ def parse_114_summary(path):
 def parse_111_or_115(path, year):
     """111年5月...各校未通過率.xls(x) / 115年5月...未通過率.xlsx -> Worksheet sheet,
     same layout as 113 but without a leading title row (data starts at row 2)."""
-    df = pd.read_excel(path, sheet_name="Worksheet", header=None)
+    df = pd.read_excel(ensure_readable(path), sheet_name="Worksheet", header=None)
     rows = []
     district = school_code = school_name = school_type = None
     for _, r in df.iloc[2:].iterrows():
@@ -263,6 +297,19 @@ def parse_112(path):
     return rows
 
 
+def blank_no_test(rows):
+    """把未施測的科目/年級組合（英語 1-2 年級）的所有數值欄位清成 None，
+    避免原始檔的 0 / 0.00% 被當成真實的「未通過率 0%」。"""
+    fields = ("testTakers", "attendees", "notPass", "notPassRate",
+              "gradeNotPassRate", "countyRate", "nationalRate")
+    for r in rows:
+        if (r["subject"], r["grade"]) in NO_TEST:
+            for f in fields:
+                if f in r:
+                    r[f] = None
+    return rows
+
+
 def summary_from_rows(rows, year):
     """Derive county-level grade x subject aggregate from per-school rows,
     using the per-row 【縣市】年級未通過率 column (constant across schools)."""
@@ -326,7 +373,7 @@ def fill_info_by_name(rows_112, *lookup_sources):
 
 
 def main():
-    rows_111 = parse_111_or_115(RAW / "111年5月學習扶助篩選測驗各校未通過率_conv.xlsx", 111)
+    rows_111 = parse_111_or_115(RAW / "111年5月學習扶助篩選測驗各校未通過率.xls", 111)
     rows_112 = parse_112(RAW / "112年篩選測驗及成長測驗未通過率.xlsx")
     rows_113 = parse_113(RAW / "113年5月學習扶助篩選測驗未通過率.xls")
     summary_113 = parse_113_summary(RAW / "113年5月學習扶助篩選測驗未通過率.xls")
@@ -337,12 +384,23 @@ def main():
     rows_114 = fill_district_from_113(rows_114, rows_113)
     rows_112 = fill_info_by_name(rows_112, rows_111, rows_113, rows_114, rows_115)
 
+    # 113 年原始檔的【全國】年級未通過率整欄都是 0，代表沒填寫而非真的 0%
+    for r in rows_113:
+        r["nationalRate"] = None
+
+    for rs in (rows_111, rows_112, rows_113, rows_114, rows_115):
+        blank_no_test(rs)
+
     summary_111 = summary_from_rows(rows_111, 111)
     summary_112 = summary_from_rows(rows_112, 112)
     summary_115 = summary_from_rows(rows_115, 115)
 
     all_rows = rows_111 + rows_112 + rows_113 + rows_114 + rows_115
-    all_summary = summary_111 + summary_112 + summary_113 + summary_114 + summary_115
+    # 未施測的科目/年級不進彙總表（明細表仍保留該列，值為 null 以示未施測）
+    all_summary = [
+        s for s in summary_111 + summary_112 + summary_113 + summary_114 + summary_115
+        if (s["subject"], s["grade"]) not in NO_TEST
+    ]
 
     (OUT / "remedial.json").write_text(
         json.dumps(all_rows, ensure_ascii=False, indent=None), encoding="utf-8"
